@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#fffbf2" />
+    <title>Local PDF Maker</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero" aria-labelledby="app-title">
+        <div class="hero__copy">
+          <p class="eyebrow">Private · browser-only · instant</p>
+          <h1 id="app-title">Turn images into one tidy PDF.</h1>
+          <p class="lede">
+            Drop JPG or PNG files, arrange the pages, and download a polished PDF.
+            Nothing uploads. Nothing leaves your browser.
+          </p>
+        </div>
+        <div class="hero__card" aria-label="App promise">
+          <span class="sparkle" aria-hidden="true">✦</span>
+          <strong>One job, done well</strong>
+          <span>Fast local image-to-PDF conversion with friendly controls.</span>
+        </div>
+      </section>
+
+      <section class="workspace" aria-label="PDF converter workspace">
+        <div class="dropzone" id="dropzone">
+          <input id="file-input" type="file" accept="image/png,image/jpeg" multiple />
+          <div class="dropzone__inner">
+            <div class="dropzone__icon" aria-hidden="true">⇣</div>
+            <h2>Drop images here</h2>
+            <p>or choose JPG / PNG files from your device</p>
+            <button class="button button--ghost" id="browse-button" type="button">Choose images</button>
+          </div>
+        </div>
+
+        <aside class="panel" aria-label="PDF settings">
+          <div class="panel__section">
+            <label for="pdf-name">PDF name</label>
+            <input id="pdf-name" type="text" value="converted-images.pdf" maxlength="80" />
+          </div>
+
+          <div class="panel__grid">
+            <div class="panel__section">
+              <label for="page-size">Page size</label>
+              <select id="page-size">
+                <option value="fit">Fit each image</option>
+                <option value="a4">A4</option>
+                <option value="letter">Letter</option>
+              </select>
+            </div>
+            <div class="panel__section">
+              <label for="margin-size">Margin</label>
+              <select id="margin-size">
+                <option value="0">None</option>
+                <option value="24" selected>Cozy</option>
+                <option value="48">Roomy</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="panel__section checkbox-row">
+            <input id="fill-page" type="checkbox" />
+            <label for="fill-page">Fill page by cropping instead of fitting</label>
+          </div>
+
+          <button class="button button--primary" id="convert-button" type="button" disabled>
+            Make PDF
+          </button>
+          <p class="status" id="status" role="status" aria-live="polite">Add images to begin.</p>
+        </aside>
+      </section>
+
+      <section class="queue-card" aria-labelledby="queue-title">
+        <div class="queue-card__header">
+          <div>
+            <p class="eyebrow">Page order</p>
+            <h2 id="queue-title">Your images</h2>
+          </div>
+          <button class="button button--text" id="clear-button" type="button" disabled>Clear all</button>
+        </div>
+        <ol class="queue" id="queue" aria-describedby="queue-help"></ol>
+        <p class="empty" id="queue-help">Images appear here with reorder and remove controls.</p>
+      </section>
+    </main>
+
+    <template id="image-card-template">
+      <li class="image-card">
+        <img alt="" />
+        <div class="image-card__meta">
+          <strong></strong>
+          <span></span>
+        </div>
+        <div class="image-card__actions">
+          <button type="button" data-action="up" aria-label="Move image up">↑</button>
+          <button type="button" data-action="down" aria-label="Move image down">↓</button>
+          <button type="button" data-action="remove" aria-label="Remove image">×</button>
+        </div>
+      </li>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
