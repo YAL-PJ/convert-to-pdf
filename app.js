@@ -1,5 +1,5 @@
 const state = {
-  images: [],
+  items: [],
   dragDepth: 0,
 };
 
@@ -24,6 +24,14 @@ const PAGE_SIZES = {
   letter: { width: 612, height: 792 },
 };
 
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'];
+const TEXT_EXTENSIONS = ['txt', 'text', 'md', 'markdown', 'csv', 'tsv', 'rtf', 'html', 'htm'];
+const OFFICE_EXTENSIONS = ['docx', 'xlsx'];
+const SUPPORTED_EXTENSIONS = [...TEXT_EXTENSIONS, ...OFFICE_EXTENSIONS, ...IMAGE_EXTENSIONS];
+const TEXT_PAGE_SIZE = 'letter';
+const TEXT_FONT_SIZE = 11;
+const TEXT_LINE_HEIGHT = 15;
+const TEXT_MIN_MARGIN = 42;
 
 function setStatus(message, tone = 'neutral') {
   elements.status.textContent = message;
@@ -33,7 +41,7 @@ function setStatus(message, tone = 'neutral') {
 
 function sanitizeFileName(name) {
   const clean = name.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\.pdf$/i, '');
-  return `${clean || 'converted-images'}.pdf`;
+  return `${clean || 'converted-files'}.pdf`;
 }
 
 function formatBytes(bytes) {
@@ -52,13 +60,36 @@ function makeId() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function extensionFor(file) {
+  return file.name.split('.').pop()?.toLowerCase() || '';
+}
+
+function describeSupportedFormats() {
+  return SUPPORTED_EXTENSIONS.map((extension) => extension.toUpperCase()).join(', ');
+}
+
+function isSupportedFile(file) {
+  return file.type.startsWith('image/') || SUPPORTED_EXTENSIONS.includes(extensionFor(file));
+}
+
+async function readFile(file) {
+  if (!isSupportedFile(file)) {
+    throw new Error(`${file.name} is not a supported file. Try ${describeSupportedFormats()}.`);
+  }
+
+  if (file.type.startsWith('image/') || IMAGE_EXTENSIONS.includes(extensionFor(file))) {
+    return readImage(file);
+  }
+
+  if (OFFICE_EXTENSIONS.includes(extensionFor(file))) {
+    return readOfficeDocument(file);
+  }
+
+  return readTextDocument(file);
+}
+
 function readImage(file) {
   return new Promise((resolve, reject) => {
-    if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      reject(new Error(`${file.name} is not a JPG or PNG image.`));
-      return;
-    }
-
     const reader = new FileReader();
     reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
     reader.onload = () => {
@@ -68,6 +99,7 @@ function readImage(file) {
         normalizeImage(image).then((normalized) => {
           resolve({
             id: makeId(),
+            kind: 'image',
             file,
             name: file.name,
             type: normalized.type,
@@ -111,64 +143,210 @@ function normalizeImage(image) {
   });
 }
 
+async function readTextDocument(file) {
+  const extension = extensionFor(file);
+  const text = await file.text();
+  const normalized = extension === 'html' || extension === 'htm' ? htmlToText(text) : text;
+  return makeTextItem(file, normalized, extension.toUpperCase() || 'TEXT');
+}
+
+function htmlToText(markup) {
+  const document = new DOMParser().parseFromString(markup, 'text/html');
+  document.querySelectorAll('script, style, noscript').forEach((node) => node.remove());
+  return document.body?.innerText || document.documentElement.textContent || '';
+}
+
+function makeTextItem(file, text, label) {
+  const cleaned = text.replace(/\r\n?/g, '\n').replace(/\t/g, '    ').trim();
+  return {
+    id: makeId(),
+    kind: 'text',
+    file,
+    name: file.name,
+    size: file.size,
+    text: cleaned || '(No readable text found.)',
+    sourceLabel: label,
+  };
+}
+
+async function readOfficeDocument(file) {
+  const entries = await unzipEntries(await file.arrayBuffer());
+  const extension = extensionFor(file);
+  if (extension === 'docx') {
+    return makeTextItem(file, docxToText(entries), 'DOCX');
+  }
+  return makeTextItem(file, xlsxToText(entries), 'XLSX');
+}
+
+async function unzipEntries(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  const eocdOffset = findEndOfCentralDirectory(view);
+  const centralDirectorySize = view.getUint32(eocdOffset + 12, true);
+  const centralDirectoryOffset = view.getUint32(eocdOffset + 16, true);
+  const entries = new Map();
+  let offset = centralDirectoryOffset;
+  const end = centralDirectoryOffset + centralDirectorySize;
+
+  while (offset < end) {
+    if (view.getUint32(offset, true) !== 0x02014b50) break;
+    const compression = view.getUint16(offset + 10, true);
+    const compressedSize = view.getUint32(offset + 20, true);
+    const fileNameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const localHeaderOffset = view.getUint32(offset + 42, true);
+    const name = decodeUtf8(bytes.slice(offset + 46, offset + 46 + fileNameLength));
+    const localNameLength = view.getUint16(localHeaderOffset + 26, true);
+    const localExtraLength = view.getUint16(localHeaderOffset + 28, true);
+    const dataOffset = localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(dataOffset, dataOffset + compressedSize);
+
+    if (!name.endsWith('/')) {
+      entries.set(name, decodeUtf8(await decompressZipEntry(compressed, compression)));
+    }
+
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
+
+function findEndOfCentralDirectory(view) {
+  const minimumOffset = Math.max(0, view.byteLength - 65557);
+  for (let offset = view.byteLength - 22; offset >= minimumOffset; offset -= 1) {
+    if (view.getUint32(offset, true) === 0x06054b50) return offset;
+  }
+  throw new Error('Could not read this Office file.');
+}
+
+async function decompressZipEntry(bytes, compression) {
+  if (compression === 0) return bytes;
+  if (compression !== 8 || !('DecompressionStream' in globalThis)) {
+    throw new Error('This browser cannot unpack compressed Office files. Try saving as TXT, CSV, or HTML.');
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+function decodeUtf8(bytes) {
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+function xmlToDocument(xml) {
+  return new DOMParser().parseFromString(xml, 'application/xml');
+}
+
+function textFromXmlNode(node) {
+  return (node.textContent || '').trim();
+}
+
+function docxToText(entries) {
+  const xml = entries.get('word/document.xml');
+  if (!xml) throw new Error('Could not find readable DOCX content.');
+  const doc = xmlToDocument(xml);
+  return [...doc.getElementsByTagName('w:p')].map((paragraph) => (
+    [...paragraph.getElementsByTagName('w:t')].map(textFromXmlNode).join('')
+  )).filter(Boolean).join('\n\n');
+}
+
+function xlsxToText(entries) {
+  const sharedStrings = readSharedStrings(entries.get('xl/sharedStrings.xml'));
+  const sheetNames = [...entries.keys()]
+    .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  if (!sheetNames.length) throw new Error('Could not find readable XLSX sheets.');
+
+  return sheetNames.map((name, index) => {
+    const doc = xmlToDocument(entries.get(name));
+    const rows = [...doc.getElementsByTagName('row')].map((row) => (
+      [...row.getElementsByTagName('c')].map((cell) => readCellValue(cell, sharedStrings)).join('    ').trimEnd()
+    )).filter(Boolean);
+    return `Sheet ${index + 1}\n${rows.join('\n')}`;
+  }).join('\n\n');
+}
+
+function readSharedStrings(xml) {
+  if (!xml) return [];
+  const doc = xmlToDocument(xml);
+  return [...doc.getElementsByTagName('si')].map((item) => (
+    [...item.getElementsByTagName('t')].map(textFromXmlNode).join('')
+  ));
+}
+
+function readCellValue(cell, sharedStrings) {
+  const type = cell.getAttribute('t');
+  if (type === 'inlineStr') return [...cell.getElementsByTagName('t')].map(textFromXmlNode).join('');
+  const value = cell.getElementsByTagName('v')[0]?.textContent || '';
+  if (type === 's') return sharedStrings[Number(value)] || '';
+  return value;
+}
+
 async function addFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
 
-  setStatus(`Adding ${files.length} image${files.length === 1 ? '' : 's'}…`);
-  const results = await Promise.allSettled(files.map(readImage));
+  setStatus(`Adding ${files.length} file${files.length === 1 ? '' : 's'}…`);
+  const results = await Promise.allSettled(files.map(readFile));
   const accepted = results.filter((result) => result.status === 'fulfilled').map((result) => result.value);
   const rejected = results.filter((result) => result.status === 'rejected');
 
-  state.images.push(...accepted);
+  state.items.push(...accepted);
   renderQueue();
 
   if (accepted.length && !rejected.length) {
-    setStatus(`${accepted.length} image${accepted.length === 1 ? '' : 's'} ready.`, 'good');
+    setStatus(`${accepted.length} file${accepted.length === 1 ? '' : 's'} ready.`, 'good');
   } else if (accepted.length) {
-    setStatus(`${accepted.length} added. ${rejected.length} skipped because they were not valid JPG/PNG images.`, 'error');
+    setStatus(`${accepted.length} added. ${rejected.length} skipped because they are not simple supported conversions.`, 'error');
   } else {
-    setStatus(rejected[0]?.reason?.message || 'No valid images found.', 'error');
+    setStatus(rejected[0]?.reason?.message || 'No supported files found.', 'error');
   }
 }
 
 function renderQueue() {
   elements.queue.replaceChildren();
-  state.images.forEach((item, index) => {
+  state.items.forEach((item, index) => {
     const card = elements.template.content.firstElementChild.cloneNode(true);
-    const thumbnail = card.querySelector('img');
+    const thumbnail = card.querySelector('.file-card__preview');
     const title = card.querySelector('strong');
     const details = card.querySelector('span');
     const upButton = card.querySelector('[data-action="up"]');
     const downButton = card.querySelector('[data-action="down"]');
 
     card.dataset.id = item.id;
-    thumbnail.src = item.dataUrl;
-    thumbnail.alt = `Preview of ${item.name}`;
+    if (item.kind === 'image') {
+      const image = document.createElement('img');
+      image.src = item.dataUrl;
+      image.alt = `Preview of ${item.name}`;
+      thumbnail.replaceChildren(image);
+      details.textContent = `Image · ${item.width}×${item.height}px · ${formatBytes(item.size)}`;
+    } else {
+      thumbnail.textContent = item.sourceLabel;
+      details.textContent = `${item.sourceLabel} document · ${formatBytes(item.size)}`;
+    }
     title.textContent = `${index + 1}. ${item.name}`;
-    details.textContent = `${item.width}×${item.height}px · ${formatBytes(item.size)}`;
     upButton.disabled = index === 0;
-    downButton.disabled = index === state.images.length - 1;
+    downButton.disabled = index === state.items.length - 1;
     elements.queue.append(card);
   });
 
-  const hasImages = state.images.length > 0;
-  elements.convertButton.disabled = !hasImages;
-  elements.clearButton.disabled = !hasImages;
-  elements.queueHelp.classList.toggle('is-hidden', hasImages);
-  if (!hasImages) setStatus('Add images to begin.');
+  const hasItems = state.items.length > 0;
+  elements.convertButton.disabled = !hasItems;
+  elements.clearButton.disabled = !hasItems;
+  elements.queueHelp.classList.toggle('is-hidden', hasItems);
+  if (!hasItems) setStatus('Add files to begin.');
 }
 
-function moveImage(id, direction) {
-  const index = state.images.findIndex((item) => item.id === id);
+function moveItem(id, direction) {
+  const index = state.items.findIndex((item) => item.id === id);
   const nextIndex = index + direction;
-  if (index < 0 || nextIndex < 0 || nextIndex >= state.images.length) return;
-  [state.images[index], state.images[nextIndex]] = [state.images[nextIndex], state.images[index]];
+  if (index < 0 || nextIndex < 0 || nextIndex >= state.items.length) return;
+  [state.items[index], state.items[nextIndex]] = [state.items[nextIndex], state.items[index]];
   renderQueue();
 }
 
-function removeImage(id) {
-  state.images = state.images.filter((item) => item.id !== id);
+function removeItem(id) {
+  state.items = state.items.filter((item) => item.id !== id);
   renderQueue();
 }
 
@@ -182,6 +360,10 @@ function calculatePage(image) {
     };
   }
   return PAGE_SIZES[selected];
+}
+
+function calculateTextPage() {
+  return PAGE_SIZES[elements.pageSize.value] || PAGE_SIZES[TEXT_PAGE_SIZE];
 }
 
 function calculatePlacement(image, page) {
@@ -210,6 +392,10 @@ function pdfEscape(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
+function pdfSafeText(value) {
+  return pdfEscape(String(value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\uFFFF]/g, '?'));
+}
+
 function asciiBytes(text) {
   return Uint8Array.from(text, (char) => char.charCodeAt(0));
 }
@@ -229,7 +415,75 @@ function makeStream(header, bytes, footer = '\nendstream') {
   return concatBytes([asciiBytes(header), bytes, asciiBytes(footer)]);
 }
 
-function buildPdf(images) {
+function wrapText(text, maxCharacters) {
+  const lines = [];
+  text.split('\n').forEach((rawLine) => {
+    const words = rawLine.split(/\s+/).filter(Boolean);
+    if (!words.length) {
+      lines.push('');
+      return;
+    }
+
+    let line = '';
+    words.forEach((word) => {
+      if (word.length > maxCharacters) {
+        if (line) lines.push(line);
+        for (let index = 0; index < word.length; index += maxCharacters) {
+          lines.push(word.slice(index, index + maxCharacters));
+        }
+        line = '';
+        return;
+      }
+
+      const nextLine = line ? `${line} ${word}` : word;
+      if (nextLine.length > maxCharacters) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = nextLine;
+      }
+    });
+    if (line) lines.push(line);
+  });
+  return lines;
+}
+
+function paginateTextItem(item, page) {
+  const margin = Math.max(TEXT_MIN_MARGIN, Number(elements.marginSize.value));
+  const maxCharacters = Math.max(28, Math.floor((page.width - margin * 2) / (TEXT_FONT_SIZE * 0.55)));
+  const bodyLines = wrapText(item.text, maxCharacters);
+  const headerLines = wrapText(item.name, maxCharacters);
+  const usableHeight = page.height - margin * 2 - TEXT_LINE_HEIGHT * 2;
+  const linesPerPage = Math.max(1, Math.floor(usableHeight / TEXT_LINE_HEIGHT));
+  const pages = [];
+
+  for (let index = 0; index < bodyLines.length; index += linesPerPage) {
+    pages.push({
+      title: headerLines[0] || item.name,
+      lines: bodyLines.slice(index, index + linesPerPage),
+      margin,
+    });
+  }
+
+  return pages.length ? pages : [{ title: item.name, lines: [''], margin }];
+}
+
+function buildTextContent(textPage, page, pageIndex, pageCount) {
+  const startY = page.height - textPage.margin;
+  const header = `${textPage.title}${pageCount > 1 ? ` (${pageIndex + 1}/${pageCount})` : ''}`;
+  const lines = [
+    'BT',
+    `/F1 13 Tf 15 TL ${textPage.margin.toFixed(3)} ${startY.toFixed(3)} Td`,
+    `(${pdfSafeText(header)}) Tj`,
+    `0 -${(TEXT_LINE_HEIGHT * 1.5).toFixed(3)} Td`,
+    `/F1 ${TEXT_FONT_SIZE} Tf ${TEXT_LINE_HEIGHT} TL`,
+    ...textPage.lines.map((line) => `(${pdfSafeText(line)}) Tj T*`),
+    'ET',
+  ];
+  return lines.join('\n');
+}
+
+function buildPdf(items) {
   const objects = [];
   const pages = [];
   const addObject = (content) => {
@@ -240,21 +494,34 @@ function buildPdf(images) {
   const catalogId = addObject('');
   const pagesId = addObject('');
   const infoId = addObject(`<< /Producer (Local PDF Maker) /Title (${pdfEscape(elements.pdfName.value)}) >>`);
+  const fontId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
 
-  images.forEach((image) => {
-    const page = calculatePage(image);
-    const placement = calculatePlacement(image, page);
-    const imageObjectId = addObject('');
-    const contentId = addObject('');
-    const pageId = addObject('');
-    const imageHeader = `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${image.bytes.length} >>\nstream\n`;
-    objects[imageObjectId - 1] = makeStream(imageHeader, image.bytes);
+  items.forEach((item) => {
+    if (item.kind === 'image') {
+      const page = calculatePage(item);
+      const placement = calculatePlacement(item, page);
+      const imageObjectId = addObject('');
+      const contentId = addObject('');
+      const pageId = addObject('');
+      const imageHeader = `<< /Type /XObject /Subtype /Image /Width ${item.width} /Height ${item.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${item.bytes.length} >>\nstream\n`;
+      objects[imageObjectId - 1] = makeStream(imageHeader, item.bytes);
 
-    const clip = placement.clip ? `${placement.clip.x.toFixed(3)} ${placement.clip.y.toFixed(3)} ${placement.clip.width.toFixed(3)} ${placement.clip.height.toFixed(3)} re W n\n` : '';
-    const content = `q\n${clip}${placement.width.toFixed(3)} 0 0 ${placement.height.toFixed(3)} ${placement.x.toFixed(3)} ${(page.height - placement.y - placement.height).toFixed(3)} cm\n/Im${imageObjectId} Do\nQ`;
-    objects[contentId - 1] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
-    objects[pageId - 1] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}] /Resources << /XObject << /Im${imageObjectId} ${imageObjectId} 0 R >> >> /Contents ${contentId} 0 R >>`;
-    pages.push(pageId);
+      const clip = placement.clip ? `${placement.clip.x.toFixed(3)} ${placement.clip.y.toFixed(3)} ${placement.clip.width.toFixed(3)} ${placement.clip.height.toFixed(3)} re W n\n` : '';
+      const content = `q\n${clip}${placement.width.toFixed(3)} 0 0 ${placement.height.toFixed(3)} ${placement.x.toFixed(3)} ${(page.height - placement.y - placement.height).toFixed(3)} cm\n/Im${imageObjectId} Do\nQ`;
+      objects[contentId - 1] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+      objects[pageId - 1] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}] /Resources << /XObject << /Im${imageObjectId} ${imageObjectId} 0 R >> >> /Contents ${contentId} 0 R >>`;
+      pages.push(pageId);
+      return;
+    }
+
+    const page = calculateTextPage();
+    const textPages = paginateTextItem(item, page);
+    textPages.forEach((textPage, index) => {
+      const content = buildTextContent(textPage, page, index, textPages.length);
+      const contentId = addObject(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+      const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+      pages.push(pageId);
+    });
   });
 
   objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
@@ -283,20 +550,20 @@ function buildPdf(images) {
 }
 
 async function convert() {
-  if (!state.images.length) return;
+  if (!state.items.length) return;
   elements.convertButton.disabled = true;
   setStatus('Building your PDF locally…');
 
   try {
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const blob = buildPdf(state.images);
+    const blob = buildPdf(state.items);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = sanitizeFileName(elements.pdfName.value);
     link.click();
     URL.revokeObjectURL(url);
-    setStatus(`Done — ${state.images.length} page PDF downloaded.`, 'good');
+    setStatus(`Done — ${state.items.length} file${state.items.length === 1 ? '' : 's'} converted to PDF.`, 'good');
   } catch (error) {
     setStatus(error.message || 'Something went wrong while making the PDF.', 'error');
   } finally {
@@ -333,16 +600,16 @@ elements.dropzone.addEventListener('drop', (event) => {
 
 elements.queue.addEventListener('click', (event) => {
   const button = event.target.closest('button');
-  const card = event.target.closest('.image-card');
+  const card = event.target.closest('.file-card');
   if (!button || !card) return;
   const { action } = button.dataset;
-  if (action === 'up') moveImage(card.dataset.id, -1);
-  if (action === 'down') moveImage(card.dataset.id, 1);
-  if (action === 'remove') removeImage(card.dataset.id);
+  if (action === 'up') moveItem(card.dataset.id, -1);
+  if (action === 'down') moveItem(card.dataset.id, 1);
+  if (action === 'remove') removeItem(card.dataset.id);
 });
 
 elements.clearButton.addEventListener('click', () => {
-  state.images = [];
+  state.items = [];
   renderQueue();
 });
 elements.convertButton.addEventListener('click', convert);

@@ -203,7 +203,7 @@ input[type="text"], select {
 .empty { margin: 14px 0 0; color: var(--muted); }
 .empty.is-hidden { display: none; }
 
-.image-card {
+.file-card {
   display: grid;
   grid-template-columns: 72px 1fr auto;
   gap: 12px;
@@ -213,12 +213,24 @@ input[type="text"], select {
   padding: 10px;
   background: #fffdf8;
 }
-.image-card img { width: 72px; height: 72px; object-fit: cover; border-radius: 14px; background: #f4eadc; }
-.image-card__meta { min-width: 0; display: grid; gap: 4px; }
-.image-card__meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.image-card__meta span { color: var(--muted); font-size: 0.84rem; }
-.image-card__actions { display: flex; flex-direction: column; gap: 4px; }
-.image-card__actions button {
+.file-card__preview {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--mint));
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+.file-card__preview img { width: 72px; height: 72px; object-fit: cover; border-radius: 14px; background: #f4eadc; }
+.file-card__meta { min-width: 0; display: grid; gap: 4px; }
+.file-card__meta strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-card__meta span { color: var(--muted); font-size: 0.84rem; }
+.file-card__actions { display: flex; flex-direction: column; gap: 4px; }
+.file-card__actions button {
   width: 32px;
   height: 28px;
   border: 1px solid var(--line);
@@ -239,7 +251,7 @@ input[type="text"], select {
   .shell { width: min(100% - 20px, 1120px); padding: 22px 0; }
   .panel__grid { grid-template-columns: 1fr; }
   .queue-card__header { align-items: stretch; flex-direction: column; }
-  .image-card { grid-template-columns: 60px 1fr; }
-  .image-card img { width: 60px; height: 60px; }
-  .image-card__actions { grid-column: 1 / -1; flex-direction: row; }
+  .file-card { grid-template-columns: 60px 1fr; }
+  .file-card__preview, .file-card__preview img { width: 60px; height: 60px; }
+  .file-card__actions { grid-column: 1 / -1; flex-direction: row; }
 }
