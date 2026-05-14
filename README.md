@@ -1,14 +1,15 @@
-# Local PDF Maker
+# Local PDF Converter
 
-A tiny, private, browser-only image-to-PDF converter. It does one thing: turns JPG and PNG images into a single downloadable PDF without uploading anything.
+A tiny, private, browser-only file-to-PDF converter. It focuses on the simple conversions people reach for most: common image formats, lightweight documents, spreadsheets, and text-based files.
 
 ## What it does
 
-- Adds JPG and PNG images with drag-and-drop or file picker.
-- Shows local previews, dimensions, and file sizes.
-- Lets you reorder or remove pages before export.
+- Adds common browser-readable images plus DOCX, XLSX, TXT, Markdown, CSV, TSV, RTF, and HTML files with drag-and-drop or the file picker.
+- Shows local previews for images and clear file badges for document formats.
+- Lets you reorder or remove files before export.
 - Builds the PDF entirely in the browser with no dependencies or server calls.
-- Offers simple page options: fit each image, A4, Letter, margins, and optional crop-to-fill.
+- Converts DOCX and XLSX by reading their text/cell content locally, then laying that content out as PDF pages.
+- Offers simple page options: fit each image, A4, Letter, margins, and optional image crop-to-fill.
 
 ## Run locally
 
