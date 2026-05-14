@@ -32,6 +32,24 @@ const TEXT_PAGE_SIZE = 'letter';
 const TEXT_FONT_SIZE = 11;
 const TEXT_LINE_HEIGHT = 15;
 const TEXT_MIN_MARGIN = 42;
+const TEXT_CANVAS_SCALE = 2;
+const TEXT_FONT_FAMILY = 'Arial, Helvetica, sans-serif';
+const RTL_TEXT_PATTERN = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFC]/;
+const NON_LATIN_TEXT_PATTERN = /[\u0370-\u03FF\u0400-\u04FF\u0590-\u08FF\u1100-\u11FF\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/g;
+const DECODING_PROBLEM_PATTERN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFD]/g;
+const TEXT_DECODER_FALLBACK_ENCODINGS = [
+  'windows-1255',
+  'windows-1256',
+  'windows-1251',
+  'windows-1253',
+  'windows-1254',
+  'windows-1252',
+  'iso-8859-1',
+  'gb18030',
+  'big5',
+  'shift_jis',
+  'euc-kr',
+];
 
 function setStatus(message, tone = 'neutral') {
   elements.status.textContent = message;
@@ -145,9 +163,39 @@ function normalizeImage(image) {
 
 async function readTextDocument(file) {
   const extension = extensionFor(file);
-  const text = await file.text();
+  const text = decodeTextBytes(new Uint8Array(await file.arrayBuffer()));
   const normalized = extension === 'html' || extension === 'htm' ? htmlToText(text) : text;
   return makeTextItem(file, normalized, extension.toUpperCase() || 'TEXT');
+}
+
+function decodeTextBytes(bytes) {
+  if (bytes[0] === 0xFE && bytes[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
+  if (bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return new TextDecoder('utf-8').decode(bytes);
+
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (error) {
+    const decoded = TEXT_DECODER_FALLBACK_ENCODINGS.map((encoding) => decodeWithEncoding(bytes, encoding))
+      .filter(Boolean)
+      .sort((a, b) => scoreDecodedText(b.text) - scoreDecodedText(a.text));
+    return decoded[0]?.text || new TextDecoder('utf-8').decode(bytes);
+  }
+}
+
+function decodeWithEncoding(bytes, encoding) {
+  try {
+    return { encoding, text: new TextDecoder(encoding).decode(bytes) };
+  } catch (error) {
+    return null;
+  }
+}
+
+function scoreDecodedText(text) {
+  const decodingProblems = text.match(DECODING_PROBLEM_PATTERN)?.length || 0;
+  const nonLatinCharacters = text.match(NON_LATIN_TEXT_PATTERN)?.length || 0;
+  const printableCharacters = text.replace(/\s/g, '').length;
+  return printableCharacters + nonLatinCharacters * 3 - decodingProblems * 20;
 }
 
 function htmlToText(markup) {
@@ -389,11 +437,11 @@ function calculatePlacement(image, page) {
 }
 
 function pdfEscape(value) {
-  return String(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
-}
-
-function pdfSafeText(value) {
-  return pdfEscape(String(value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\uFFFF]/g, '?'));
+  return String(value)
+    .replace(/[\u0000-\u001F\u007F-\uFFFF]/g, '?')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
 }
 
 function asciiBytes(text) {
@@ -415,6 +463,31 @@ function makeStream(header, bytes, footer = '\nendstream') {
   return concatBytes([asciiBytes(header), bytes, asciiBytes(footer)]);
 }
 
+function blobToBytes(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read generated page image.'));
+    reader.onload = () => resolve(new Uint8Array(reader.result));
+    reader.readAsArrayBuffer(blob);
+  });
+}
+
+function canvasToJpegBytes(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Could not render text page for PDF export.'));
+        return;
+      }
+      blobToBytes(blob).then(resolve, reject);
+    }, 'image/jpeg', 0.94);
+  });
+}
+
+function hasRtlText(value) {
+  return RTL_TEXT_PATTERN.test(value);
+}
+
 function wrapText(text, maxCharacters) {
   const lines = [];
   text.split('\n').forEach((rawLine) => {
@@ -426,10 +499,11 @@ function wrapText(text, maxCharacters) {
 
     let line = '';
     words.forEach((word) => {
-      if (word.length > maxCharacters) {
+      const characters = Array.from(word);
+      if (characters.length > maxCharacters) {
         if (line) lines.push(line);
-        for (let index = 0; index < word.length; index += maxCharacters) {
-          lines.push(word.slice(index, index + maxCharacters));
+        for (let index = 0; index < characters.length; index += maxCharacters) {
+          lines.push(characters.slice(index, index + maxCharacters).join(''));
         }
         line = '';
         return;
@@ -468,22 +542,45 @@ function paginateTextItem(item, page) {
   return pages.length ? pages : [{ title: item.name, lines: [''], margin }];
 }
 
-function buildTextContent(textPage, page, pageIndex, pageCount) {
-  const startY = page.height - textPage.margin;
+async function renderTextPageImage(textPage, page, pageIndex, pageCount) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(page.width * TEXT_CANVAS_SCALE);
+  canvas.height = Math.ceil(page.height * TEXT_CANVAS_SCALE);
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw new Error('Canvas is unavailable.');
+
+  context.scale(TEXT_CANVAS_SCALE, TEXT_CANVAS_SCALE);
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, page.width, page.height);
+  context.fillStyle = '#172033';
+  context.textBaseline = 'alphabetic';
+
   const header = `${textPage.title}${pageCount > 1 ? ` (${pageIndex + 1}/${pageCount})` : ''}`;
-  const lines = [
-    'BT',
-    `/F1 13 Tf 15 TL ${textPage.margin.toFixed(3)} ${startY.toFixed(3)} Td`,
-    `(${pdfSafeText(header)}) Tj`,
-    `0 -${(TEXT_LINE_HEIGHT * 1.5).toFixed(3)} Td`,
-    `/F1 ${TEXT_FONT_SIZE} Tf ${TEXT_LINE_HEIGHT} TL`,
-    ...textPage.lines.map((line) => `(${pdfSafeText(line)}) Tj T*`),
-    'ET',
-  ];
-  return lines.join('\n');
+  drawCanvasTextLine(context, header, textPage.margin, page.height - textPage.margin, page.width, 13, true);
+
+  context.font = `${TEXT_FONT_SIZE}px ${TEXT_FONT_FAMILY}`;
+  let y = page.height - textPage.margin - TEXT_LINE_HEIGHT * 1.5;
+  textPage.lines.forEach((line) => {
+    drawCanvasTextLine(context, line, textPage.margin, y, page.width, TEXT_FONT_SIZE);
+    y -= TEXT_LINE_HEIGHT;
+  });
+
+  return {
+    width: canvas.width,
+    height: canvas.height,
+    bytes: await canvasToJpegBytes(canvas),
+  };
 }
 
-function buildPdf(items) {
+function drawCanvasTextLine(context, line, margin, y, pageWidth, fontSize, isHeader = false) {
+  const rtl = hasRtlText(line);
+  context.font = `${isHeader ? '700 ' : ''}${fontSize}px ${TEXT_FONT_FAMILY}`;
+  context.direction = rtl ? 'rtl' : 'ltr';
+  context.textAlign = rtl ? 'right' : 'left';
+  context.fillText(line || ' ', rtl ? pageWidth - margin : margin, y);
+}
+
+async function buildPdf(items) {
   const objects = [];
   const pages = [];
   const addObject = (content) => {
@@ -494,9 +591,7 @@ function buildPdf(items) {
   const catalogId = addObject('');
   const pagesId = addObject('');
   const infoId = addObject(`<< /Producer (Local PDF Maker) /Title (${pdfEscape(elements.pdfName.value)}) >>`);
-  const fontId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
-
-  items.forEach((item) => {
+  for (const item of items) {
     if (item.kind === 'image') {
       const page = calculatePage(item);
       const placement = calculatePlacement(item, page);
@@ -511,18 +606,25 @@ function buildPdf(items) {
       objects[contentId - 1] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
       objects[pageId - 1] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}] /Resources << /XObject << /Im${imageObjectId} ${imageObjectId} 0 R >> >> /Contents ${contentId} 0 R >>`;
       pages.push(pageId);
-      return;
+      continue;
     }
 
     const page = calculateTextPage();
     const textPages = paginateTextItem(item, page);
-    textPages.forEach((textPage, index) => {
-      const content = buildTextContent(textPage, page, index, textPages.length);
-      const contentId = addObject(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-      const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+    for (const [index, textPage] of textPages.entries()) {
+      const renderedPage = await renderTextPageImage(textPage, page, index, textPages.length);
+      const imageObjectId = addObject('');
+      const contentId = addObject('');
+      const pageId = addObject('');
+      const imageHeader = `<< /Type /XObject /Subtype /Image /Width ${renderedPage.width} /Height ${renderedPage.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${renderedPage.bytes.length} >>\nstream\n`;
+      objects[imageObjectId - 1] = makeStream(imageHeader, renderedPage.bytes);
+
+      const content = `q\n${page.width.toFixed(3)} 0 0 ${page.height.toFixed(3)} 0 0 cm\n/Im${imageObjectId} Do\nQ`;
+      objects[contentId - 1] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
+      objects[pageId - 1] = `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${page.width.toFixed(3)} ${page.height.toFixed(3)}] /Resources << /XObject << /Im${imageObjectId} ${imageObjectId} 0 R >> >> /Contents ${contentId} 0 R >>`;
       pages.push(pageId);
-    });
-  });
+    }
+  }
 
   objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
   objects[pagesId - 1] = `<< /Type /Pages /Kids [${pages.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;
@@ -556,7 +658,7 @@ async function convert() {
 
   try {
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const blob = buildPdf(state.items);
+    const blob = await buildPdf(state.items);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
