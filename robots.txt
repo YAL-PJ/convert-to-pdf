@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://yal-pj.github.io/convert-to-pdf/sitemap.xml
+Sitemap: https://converttopdffree.com/sitemap.xml
