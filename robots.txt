@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yal-pj.github.io/convert-to-pdf/sitemap.xml
