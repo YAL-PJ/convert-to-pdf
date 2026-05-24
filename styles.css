@@ -240,6 +240,46 @@ input[type="text"], select {
   cursor: pointer;
 }
 
+.seo {
+  margin-top: 28px;
+  padding: 28px;
+  border-radius: 32px;
+  background: var(--card);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  color: var(--ink);
+  line-height: 1.6;
+}
+.seo h2 { font-size: clamp(1.4rem, 2.4vw, 1.9rem); letter-spacing: -0.03em; margin-bottom: 10px; }
+.seo h3 { margin: 22px 0 8px; font-size: 1.1rem; letter-spacing: -0.01em; }
+.seo p { color: var(--muted); margin-bottom: 8px; }
+.seo ul { margin: 0 0 4px; padding-left: 20px; color: var(--muted); }
+.seo li { margin: 4px 0; }
+.seo details {
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdf8;
+}
+.seo details summary {
+  cursor: pointer;
+  font-weight: 750;
+  color: var(--ink);
+}
+.seo details[open] summary { margin-bottom: 6px; }
+.seo details p { margin: 0; }
+
+.site-footer {
+  width: min(1120px, calc(100% - 32px));
+  margin: 24px auto 32px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.site-footer p { margin: 0; }
+
 @media (max-width: 860px) {
   .hero, .workspace { grid-template-columns: 1fr; }
   .hero__card { transform: none; }
