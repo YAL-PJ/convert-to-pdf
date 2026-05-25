@@ -5,7 +5,7 @@
  * After deploying the Apps Script web app, paste its /exec URL into FEEDBACK_ENDPOINT below.
  */
 
-const FEEDBACK_ENDPOINT = '';
+const FEEDBACK_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzgIwblyMQv4O8GypUMT7xfj8Xkv6W2oyCFxZVcUExwpWhHr_7WWXQlvi2tfzjXisu4Ww/exec';
 const APP_ID = 'converttopdf';
 const OWNER_NAME = 'Yanis (creator)';
 
