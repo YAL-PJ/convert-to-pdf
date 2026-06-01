@@ -8,6 +8,12 @@
 const FEEDBACK_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzgIwblyMQv4O8GypUMT7xfj8Xkv6W2oyCFxZVcUExwpWhHr_7WWXQlvi2tfzjXisu4Ww/exec';
 const APP_ID = 'converttopdf';
 const OWNER_NAME = 'Yanis (creator)';
+const THIRD_PARTY_ERROR_PATTERNS = [
+  /googlesyndication|google-analytics|googletagmanager|doubleclick|adservice|adsbygoogle/i,
+  /chrome-extension:|moz-extension:|safari-extension:|extension:|extensions\//i,
+  /safeframe|recaptcha|user-sync|usersync|sync\?|pixel\.|beacon/i,
+  /ResizeObserver loop limit exceeded|Script error\.?/i,
+];
 
 let cachedHistory = [];
 let showAllHistory = false;
@@ -134,7 +140,7 @@ function renderFeedbackList(items, hadError) {
   const showMore = document.getElementById('cv-feedback-show-more');
   if (!list) return;
 
-  const visible = items.filter((i) => i.message);
+  const visible = items.filter((i) => i.message && !isPrivateFeedback(i));
   const slice = showAllHistory ? visible : visible.slice(0, 3);
 
   list.innerHTML = '';
@@ -183,11 +189,98 @@ function renderFeedbackList(items, hadError) {
   }
 }
 
+function isPrivateFeedback(entry) {
+  if (!entry) return false;
+  if (entry.isPrivate === true || entry.private === true) return true;
+  const flag = String(entry.isPrivate ?? entry.private ?? '').trim().toLowerCase();
+  return flag === 'true' || flag === 'yes' || flag === '1';
+}
+
 function formatMeta(entry) {
   const d = entry.timestamp ? new Date(entry.timestamp) : null;
   const when = d && !isNaN(d) ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
   const name = entry.name && entry.name.trim() ? entry.name.trim() : 'Anonymous';
   return [name, when].filter(Boolean).join(' · ');
 }
+
+function normalizeError(error) {
+  if (error instanceof Error) return error;
+  if (error && error.reason instanceof Error) return error.reason;
+  if (error && error.error instanceof Error) return error.error;
+  let message = 'Unknown error';
+  if (typeof error === 'string') {
+    message = error;
+  } else if (error) {
+    try {
+      message = JSON.stringify(error);
+    } catch (_) {
+      message = String(error);
+    }
+  }
+  return new Error(message);
+}
+
+function isIgnoredThirdPartyError(payload) {
+  const text = [payload.message, payload.stack, payload.url, payload.feature]
+    .filter(Boolean)
+    .join('\n');
+  return THIRD_PARTY_ERROR_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function reportError(error, context = {}) {
+  const normalized = normalizeError(error);
+  const payload = {
+    action: 'error_report',
+    app: APP_ID,
+    message: String(context.message || normalized.message || 'Unknown error').slice(0, 2000),
+    stack: String(context.stack || normalized.stack || '').slice(0, 8000),
+    url: String(context.url || window.location.href || '').slice(0, 1000),
+    feature: String(context.feature || 'general').slice(0, 120),
+    userAgent: String(navigator.userAgent || '').slice(0, 500),
+  };
+
+  if (context.appVersion) {
+    payload.appVersion = String(context.appVersion).slice(0, 120);
+  }
+  if (context.userNote) {
+    payload.userNote = String(context.userNote).slice(0, 1000);
+  }
+
+  if (!FEEDBACK_ENDPOINT || isIgnoredThirdPartyError(payload)) {
+    return { ok: false, target: 'ignored' };
+  }
+
+  try {
+    const res = await fetch(FEEDBACK_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (json && json.ok === false) throw new Error(json.error || 'error report failed');
+    return { ok: true, target: 'apps-script' };
+  } catch (err) {
+    console.warn('error report submit error', err);
+    return { ok: false, target: 'apps-script', error: String(err && err.message ? err.message : err) };
+  }
+}
+
+window.reportError = reportError;
+
+window.addEventListener('error', (event) => {
+  reportError(event.error || event.message, {
+    feature: 'window-error',
+    message: event.message,
+    stack: event.error && event.error.stack,
+    url: event.filename || window.location.href,
+  });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  reportError(event.reason, {
+    feature: 'unhandled-rejection',
+    url: window.location.href,
+  });
+});
 
 document.addEventListener('DOMContentLoaded', feedbackReady);
