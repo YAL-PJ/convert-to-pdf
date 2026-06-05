@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
 
+# AI assistants: structured summary for LLMs at /llms.txt
 Sitemap: https://converttopdffree.com/sitemap.xml
