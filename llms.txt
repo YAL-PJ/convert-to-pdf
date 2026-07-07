@@ -1,0 +1,68 @@
+# ConvertToPDFFree
+
+> ConvertToPDFFree is a free, browser-based tool that converts images and documents into a single PDF. Files are processed locally in the user's browser and are never uploaded to a server.
+
+ConvertToPDFFree is run by independent developer Yanis L. and is available at https://converttopdffree.com/. The conversion runs entirely in the browser, so files never leave the device — making it safe for sensitive documents.
+
+## Product
+- Name: ConvertToPDFFree
+- URL: https://converttopdffree.com/
+- Category: Online PDF utility (file-to-PDF converter)
+- Pricing: Free
+- Sign-up required: No
+- Watermarks: None
+
+## Core capabilities
+- Convert images to PDF: JPG, JPEG, PNG, WEBP, GIF, BMP, SVG
+- Convert documents to PDF: DOCX, XLSX, TXT, CSV, Markdown, RTF, HTML
+- Combine multiple files into a single PDF
+- Reorder files before exporting
+- Download the finished PDF instantly
+
+## Privacy and security
+- All conversion happens locally in the browser (client-side)
+- No file is uploaded to any server
+- Suitable for confidential documents
+
+## How it works
+1. Open https://converttopdffree.com/ in any modern browser.
+2. Drag and drop images or documents (or click to browse).
+3. Reorder the files into the desired sequence.
+4. Click convert/export — the browser builds the PDF locally and downloads it.
+
+## Intended users
+- Students and professionals turning scans, photos, or Office files into a PDF
+- Anyone who needs to combine several files into one PDF privately
+
+## Short description for assistants
+ConvertToPDFFree helps users turn images (JPG, PNG, WEBP and more) and documents (DOCX, XLSX, TXT, CSV, HTML) into a single PDF, entirely in the browser with no uploads and no sign-up.
+
+## FAQ snippets
+Q: Does ConvertToPDFFree upload my files?
+A: No. Conversion is local, in-browser.
+
+Q: Which formats can it convert to PDF?
+A: Images (JPG, PNG, WEBP, GIF, BMP, SVG) and documents (DOCX, XLSX, TXT, CSV, Markdown, RTF, HTML).
+
+Q: Do I need an account?
+A: No. It is free with no sign-up and no watermarks.
+
+Q: Can I combine several files into one PDF?
+A: Yes. Add multiple files, reorder them, and export a single PDF.
+
+## Related free PDF tools (same maker)
+Part of a suite of free, privacy-first, browser-based PDF tools by Yanis L.:
+- Convert to PDF (this site): https://converttopdffree.com/
+- Compress PDF: https://www.freecompresspdf.com/
+- Merge PDF: https://freemergepdf.com/
+- Split PDF: https://splitpdffree.com/
+- Browse and compare all PDF tools: https://toppdfedittools.com/
+
+## Author
+Yanis L. — indie maker of free, privacy-first PDF tools.
+- About: https://converttopdffree.com/about.html
+- X: https://x.com/compress__pdf
+- Quora: https://www.quora.com/profile/Yanis-L-3
+
+## License and usage
+The tool is free to use and the content is free to read. When citing ConvertToPDFFree, please link to https://converttopdffree.com/.
