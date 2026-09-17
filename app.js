@@ -51,7 +51,52 @@ const TEXT_DECODER_FALLBACK_ENCODINGS = [
   'euc-kr',
 ];
 
-function setStatus(message, tone = 'neutral') {
+/**
+ * Send a crash to the error backend with a safe breadcrumb describing the input
+ * that failed (see input-metadata.js for what is and is not captured).
+ *
+ * Reporting is strictly fire-and-forget: every failure mode -- reporter not
+ * loaded, metadata module missing, extraction blowing up, network down -- is
+ * swallowed here so that reporting an error can never itself break the app.
+ */
+function reportFailure(error, { feature, file, context = {}, code } = {}) {
+  try {
+    const report = globalThis.reportError;
+    if (typeof report !== 'function') return;
+    const metadata = globalThis.InputMetadata;
+    const notePromise = metadata && typeof metadata.buildUserNote === 'function'
+      ? metadata.buildUserNote(context, file)
+      : Promise.resolve('');
+    Promise.resolve(notePromise)
+      .catch(() => '')
+      .then((userNote) => report(error, {
+        feature,
+        code,
+        userNote,
+        // File NAME only, which the backend already stores; no contents.
+        fileName: file && file.name ? String(file.name) : undefined,
+      }))
+      .catch(() => {});
+  } catch (_) {
+    /* never rethrow out of the error reporter */
+  }
+}
+
+function conversionContext(extra = {}) {
+  const items = state.items;
+  return {
+    mode: items.length > 1 ? 'multi' : 'single',
+    files: items.length,
+    totalBytes: items.reduce((sum, item) => sum + (Number(item.size) || 0), 0),
+    kind: [...new Set(items.map((item) => item.kind))].join('+') || 'none',
+    pageSize: elements.pageSize?.value,
+    margin: elements.marginSize?.value,
+    fillPage: elements.fillPage?.checked,
+    ...extra,
+  };
+}
+
+function setAppStatus(message, tone = 'neutral') {
   elements.status.textContent = message;
   elements.status.classList.toggle('is-good', tone === 'good');
   elements.status.classList.toggle('is-error', tone === 'error');
@@ -334,20 +379,35 @@ async function addFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
 
-  setStatus(`Adding ${files.length} file${files.length === 1 ? '' : 's'}…`);
+  setAppStatus(`Adding ${files.length} file${files.length === 1 ? '' : 's'}…`);
   const results = await Promise.allSettled(files.map(readFile));
   const accepted = results.filter((result) => result.status === 'fulfilled').map((result) => result.value);
   const rejected = results.filter((result) => result.status === 'rejected');
+
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return;
+    reportFailure(result.reason, {
+      feature: 'add-files',
+      code: 'read-file-failed',
+      file: files[index],
+      context: {
+        mode: files.length > 1 ? 'multi' : 'single',
+        step: 'read',
+        files: files.length,
+        totalBytes: files.reduce((sum, item) => sum + (Number(item.size) || 0), 0),
+      },
+    });
+  });
 
   state.items.push(...accepted);
   renderQueue();
 
   if (accepted.length && !rejected.length) {
-    setStatus(`${accepted.length} file${accepted.length === 1 ? '' : 's'} ready.`, 'good');
+    setAppStatus(`${accepted.length} file${accepted.length === 1 ? '' : 's'} ready.`, 'good');
   } else if (accepted.length) {
-    setStatus(`${accepted.length} added. ${rejected.length} skipped because they are not simple supported conversions.`, 'error');
+    setAppStatus(`${accepted.length} added. ${rejected.length} skipped because they are not simple supported conversions.`, 'error');
   } else {
-    setStatus(rejected[0]?.reason?.message || 'No supported files found.', 'error');
+    setAppStatus(rejected[0]?.reason?.message || 'No supported files found.', 'error');
   }
 }
 
@@ -382,7 +442,7 @@ function renderQueue() {
   elements.convertButton.disabled = !hasItems;
   elements.clearButton.disabled = !hasItems;
   elements.queueHelp.classList.toggle('is-hidden', hasItems);
-  if (!hasItems) setStatus('Add files to begin.');
+  if (!hasItems) setAppStatus('Add files to begin.');
 }
 
 function moveItem(id, direction) {
@@ -654,7 +714,7 @@ async function buildPdf(items) {
 async function convert() {
   if (!state.items.length) return;
   elements.convertButton.disabled = true;
-  setStatus('Building your PDF locally…');
+  setAppStatus('Building your PDF locally…');
 
   try {
     await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -665,9 +725,18 @@ async function convert() {
     link.download = sanitizeFileName(elements.pdfName.value);
     link.click();
     URL.revokeObjectURL(url);
-    setStatus(`Done — ${state.items.length} file${state.items.length === 1 ? '' : 's'} converted to PDF.`, 'good');
+    setAppStatus(`Done — ${state.items.length} file${state.items.length === 1 ? '' : 's'} converted to PDF.`, 'good');
   } catch (error) {
-    setStatus(error.message || 'Something went wrong while making the PDF.', 'error');
+    setAppStatus(error.message || 'Something went wrong while making the PDF.', 'error');
+    // Only attach per-file shape when there is one candidate; with a mixed queue
+    // we cannot tell which file broke, and guessing would mislead the triage job.
+    const onlyItem = state.items.length === 1 ? state.items[0] : null;
+    reportFailure(error, {
+      feature: 'convert',
+      code: 'build-pdf-failed',
+      file: onlyItem && onlyItem.file,
+      context: conversionContext({ step: 'convert' }),
+    });
   } finally {
     elements.convertButton.disabled = false;
   }

@@ -1,0 +1,14 @@
+{
+  "name": "converttopdf-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser tests for converttopdffree.com (the site itself is dependency-free static HTML/JS).",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}
