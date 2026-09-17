@@ -203,6 +203,25 @@ function formatMeta(entry) {
   return [name, when].filter(Boolean).join(' · ');
 }
 
+/**
+ * Per-tab id so several reports from one broken session can be grouped in the
+ * sheet. Random, not derived from anything about the user or their files, and
+ * dropped when the tab closes.
+ */
+function getSessionId() {
+  try {
+    const key = 'cv-error-session-id';
+    let id = sessionStorage.getItem(key);
+    if (!id) {
+      id = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      sessionStorage.setItem(key, id);
+    }
+    return id;
+  } catch (_) {
+    return '';
+  }
+}
+
 function normalizeError(error) {
   if (error instanceof Error) return error;
   if (error && error.reason instanceof Error) return error.reason;
@@ -228,22 +247,13 @@ function isIgnoredThirdPartyError(payload) {
 }
 
 async function reportError(error, context = {}) {
-  const normalized = normalizeError(error);
-  const payload = {
-    action: 'error_report',
-    app: APP_ID,
-    message: String(context.message || normalized.message || 'Unknown error').slice(0, 2000),
-    stack: String(context.stack || normalized.stack || '').slice(0, 8000),
-    url: String(context.url || window.location.href || '').slice(0, 1000),
-    feature: String(context.feature || 'general').slice(0, 120),
-    userAgent: String(navigator.userAgent || '').slice(0, 500),
-  };
-
-  if (context.appVersion) {
-    payload.appVersion = String(context.appVersion).slice(0, 120);
-  }
-  if (context.userNote) {
-    payload.userNote = String(context.userNote).slice(0, 1000);
+  let payload;
+  try {
+    payload = buildErrorPayload(error, context);
+  } catch (err) {
+    // Reporting must never be the thing that breaks the page.
+    console.warn('error report build failed', err);
+    return { ok: false, target: 'skipped' };
   }
 
   if (!FEEDBACK_ENDPOINT || isIgnoredThirdPartyError(payload)) {
@@ -265,7 +275,43 @@ async function reportError(error, context = {}) {
   }
 }
 
+function buildErrorPayload(error, context = {}) {
+  const normalized = normalizeError(error);
+  const payload = {
+    action: 'error_report',
+    app: APP_ID,
+    message: String(context.message || normalized.message || 'Unknown error').slice(0, 2000),
+    stack: String(context.stack || normalized.stack || '').slice(0, 8000),
+    url: String(context.url || window.location.href || '').slice(0, 1000),
+    feature: String(context.feature || 'general').slice(0, 120),
+    userAgent: String(navigator.userAgent || '').slice(0, 500),
+  };
+
+  if (context.appVersion) {
+    payload.appVersion = String(context.appVersion).slice(0, 120);
+  }
+  if (context.userNote) {
+    payload.userNote = String(context.userNote).slice(0, 1000);
+  }
+  if (context.code) {
+    payload.code = String(context.code).slice(0, 120);
+  }
+  // File NAME only. The file itself never leaves the browser, and nothing in the
+  // payload carries its bytes, its text, or its pixels -- see input-metadata.js.
+  if (context.fileName) {
+    payload.fileName = String(context.fileName).slice(0, 260);
+  }
+  const sessionId = getSessionId();
+  if (sessionId) {
+    payload.sessionId = sessionId.slice(0, 80);
+  }
+
+  return payload;
+}
+
 window.reportError = reportError;
+// Exposed so the Playwright suite can assert payload shape without any network.
+window.buildErrorPayload = buildErrorPayload;
 
 window.addEventListener('error', (event) => {
   reportError(event.error || event.message, {
